@@ -1,26 +1,49 @@
 import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 import MapView, { Marker, Polygon } from "react-native-maps";
+import proj4 from "proj4";
+
+proj4.defs("EPSG:3857","+proj=merc +lon_0=0 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs");
+
+function convertPolygonRingTo4326(ring) {
+  return ring.map(([x, y]) => {
+    const [lon, lat] = proj4("EPSG:3857","EPSG:4326",[x, y]);
+    return [lon, lat];
+  });
+}
+
+function convertGeoJSONFeatureTo4326(feature: { geometry: { type: string; coordinates: any[]; }; }) {
+  if (feature.geometry.type === "Polygon") {
+    feature.geometry.coordinates = feature.geometry.coordinates.map((ring) =>
+      convertPolygonRingTo4326(ring)
+    );
+  } else if (feature.geometry.type === "MultiPolygon") {
+    feature.geometry.coordinates = feature.geometry.coordinates.map((poly) =>
+      poly.map((ring) => convertPolygonRingTo4326(ring))
+    );
+  }
+  return feature;
+}
 
 export default function AlgaeProbabilityMap() {
   const [loading, setLoading] = useState(true);
   const [features, setFeatures] = useState<any[]>([]);
+  
+  const epsg3857 = "+proj=merc +lon_0=0 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs";
+  const epsg4326 = "+proj=longlat +datum=WGS84 +no_defs";
+
+  proj4.defs("EPSG:3857", epsg3857);
+  proj4.defs("EPSG:4326", epsg4326);
 
   useEffect(() => {
-    // 1) Fetch the GeoJSON from the API
-    fetch("https://snowalgaeproductionapp.azurewebsites.net/api/v3/records?data_format=geojson")
-      .then((res) => res.json())
-      .then((geojson) => {
-        // 2) If your service returns the nested format:
-        //    { object: "featureCollection", data: { type: "FeatureCollection", features: [...] } }
-        const loadedFeatures = geojson?.data?.features || [];
-        setFeatures(loadedFeatures);
-        setLoading(false);
-      })
-      .catch((error) => {
-        console.error("Error fetching geojson:", error);
-        setLoading(false);
-      });
+    const geojson = require("./polygons_resamp_04.json");
+    // 1) Convert from EPSG:3857 to EPSG:4326
+    const converted = {
+      ...geojson,
+      features: geojson.features.map((f) => convertGeoJSONFeatureTo4326(f)),
+    };
+    setFeatures(converted.features);
+    setLoading(false);
   }, []);
 
   if (loading) {
@@ -70,7 +93,6 @@ export default function AlgaeProbabilityMap() {
   );
 }
 
-// Same helper as before
 function convertGeoJSONToPolygonCoords(
   geometry: { type: string; coordinates: any }
 ): { latitude: number; longitude: number }[][] {
